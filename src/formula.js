@@ -338,10 +338,7 @@ class Formula extends Node {
         str = str.replace(/\\\\/g, '\\')
         return this.literal(str, lang, dt)
       case '_':
-        x = new BlankNode()
-        x.id = parseInt(str.slice(3), 10)
-        BlankNode.nextId--
-        return x
+        return new BlankNode(str.slice(2))
       case '?':
         return new Variable(str.slice(1))
     }
@@ -433,7 +430,7 @@ class Formula extends Node {
     var statementsCopy = this.statements.map(function (ea) {
       return ea.substitute(bindings)
     })
-    console.log('formula subs statmnts:' + statementsCopy)
+    console.log('Formula subs statmnts:' + statementsCopy)
     var y = new Formula()
     y.add(statementsCopy)
     console.log('indexed-form subs formula:' + y)
@@ -537,9 +534,9 @@ class Formula extends Node {
     return this.statementsMatching(s, p, o, g, false).length
   }
 }
-Formula.termType = 'formula'
+Formula.termType = 'Graph'
 
-Formula.prototype.classOrder = ClassOrder['Formula']
+Formula.prototype.classOrder = ClassOrder['Graph']
 Formula.prototype.isVar = 0
 
 Formula.prototype.ns = require('./namespace')

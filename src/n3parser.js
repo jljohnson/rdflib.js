@@ -655,7 +655,8 @@ __SinkParser.prototype.anonymousNode = function(ln) {
     if (term) {
         return term;
     }
-    var term = this._store.bnode(this._context, this._reason2);
+    var term = this._store.bnode(ln);
+    // var term = this._store.bnode(this._context, this._reason2); eh?
     this._anonymousNodes[ln] = ( term);
     return term;
 };
@@ -1270,12 +1271,14 @@ __SinkParser.prototype.object = function(str, i, res) {
         else {
             var i = j;
         }
-        if ((str.charAt(i) == "\"")) {
-            if ((pyjslib_slice(str, i,  ( i + 3 ) ) == "\"\"\"")) {
-                var delim = "\"\"\"";
+        var delim = null
+        let ch = str.charAt(i)
+        if ((ch == "\"" || ch == "'")) {
+            if (str.slice(i,  ( i + 3 ) == ch + ch)) {
+                delim = ch + ch + ch;
             }
             else {
-                var delim = "\"";
+                delim = ch;
             }
             var i =  ( i + pyjslib_len(delim) ) ;
             var pairFudge = this.strconst(str, i, delim);

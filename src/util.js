@@ -13,7 +13,6 @@ module.exports.dtstamp = dtstamp
 module.exports.DOMParserFactory = domParser
 module.exports.domToString = domToString
 module.exports.dumpNode = dumpNode
-module.exports.getHTTPHeaders = getHTTPHeaders
 module.exports.heavyCompare = heavyCompare
 module.exports.heavyCompareSPO = heavyCompareSPO
 module.exports.output = output
@@ -24,13 +23,15 @@ module.exports.string_startswith = stringStartsWith
 module.exports.string = {}
 module.exports.string.template = stringTemplate
 module.exports.uri = require('./uri')  // TODO: Remove this mixed usage
-// module.exports.variablesIn = variablesIn
-module.exports.XMLHTTPFactory = xhr
 module.exports.log = log
 
 module.exports.mediaTypeClass = function(mediaType){
   mediaType = mediaType.split(';')[0].trim()  // remove media type parameters
   return new NamedNode('http://www.w3.org/ns/iana/media-types/' + mediaType + '#Resource')
+}
+
+module.exports.linkRelationProperty = function(relation){
+  return new NamedNode('http://www.w3.org/ns/iana/link-relations/relation#' + relation.trim())
 }
 
 /**
@@ -78,7 +79,8 @@ function ajarHandleNewTerm (kb, p, requestedBy) {
     log.warn('Assuming server still broken, faking redirect of <' + p.uri +
       '> to <' + docuri + '>')
   }
-  sf.requestURI(docuri, requestedBy)
+
+  return sf.fetch(docuri, { referringTerm: requestedBy })
 }
 
 /**
@@ -134,16 +136,19 @@ function callbackify (obj, callbacks) {
     obj.callbacks[hook].unshift(func)
   }
 
-  obj.fireCallbacks = function (hook, args) {
+  obj.fireCallbacks = function fireCallbacks (hook, args) {
     var newCallbacks = []
     var replaceCallbacks = []
     var len = obj.callbacks[hook].length
     var x
+    let callback
+
     // log.info('!@$ Firing '+hook+' call back with length'+len)
     for (x = len - 1; x >= 0; x--) {
       // log.info('@@ Firing '+hook+' callback '+ obj.callbacks[hook][x])
-      if (obj.callbacks[hook][x].apply(obj, args)) {
-        newCallbacks.push(obj.callbacks[hook][x])
+      callback = obj.callbacks[hook][x]
+      if (callback && callback.apply(obj, args)) {
+        newCallbacks.push(callback)
       }
     }
 
@@ -164,10 +169,7 @@ function callbackify (obj, callbacks) {
  * Exports as `DOMParserFactory`
  */
 function domParser () {
-  if (tabulator && tabulator.isExtension) {
-    return Components.classes['@mozilla.org/xmlextras/domparser;1']
-      .getService(Components.interfaces.nsIDOMParser)
-  } else if (window.DOMParser) {
+  if (window.DOMParser) {
     return new DOMParser()
   } else if (window.ActiveXObject) {
     return new ActiveXObject('Microsoft.XMLDOM')
@@ -270,36 +272,13 @@ function dtstamp () {
 }
 
 /**
- * Returns a hashmap of HTTP headers and their values.
- * @@ Bug: Assumes that each header only occurs once.
- * Also note that a , in a header value is just the same as having two headers.
- */
-function getHTTPHeaders (xhr) {
-  var lines = xhr.getAllResponseHeaders().split('\n')
-  var headers = {}
-  var last
-  for (var x = 0; x < lines.length; x++) {
-    if (lines[x].length > 0) {
-      var pair = lines[x].split(': ')
-      if (typeof pair[1] === 'undefined') { // continuation
-        headers[last] += '\n' + pair[0]
-      } else {
-        last = pair[0].toLowerCase()
-        headers[last] = pair[1]
-      }
-    }
-  }
-  return headers
-}
-
-/**
  * Compares statements (heavy comparison for repeatable canonical ordering)
  */
-function heavyCompare (x, y, g) {
+function heavyCompare (x, y, g, uriMap) {
   var nonBlank = function (x) {
     return (x.termType === 'BlankNode') ? null : x
   }
-  var signature = function (b) {
+  var signature = function (x) {
     var lis = g.statementsMatching(x).map(function (st) {
       return ('' + nonBlank(st.subject) + ' ' + nonBlank(st.predicate) +
         ' ' + nonBlank(st.object))
@@ -310,23 +289,24 @@ function heavyCompare (x, y, g) {
     lis.sort()
     return lis.join('\n')
   }
-  if ((x.termType === 'BlankNode') || (y.termType === 'BlankNode')) {
+  if ((x.termType === 'BlankNode') && (y.termType === 'BlankNode')) {
     if (x.compareTerm(y) === 0) return 0 // Same
     if (signature(x) > signature(y)) return +1
     if (signature(x) < signature(y)) return -1
     return x.compareTerm(y)  // Too bad -- this order not canonical.
     // throw "different bnodes indistinquishable for sorting"
   } else {
+    if (uriMap && x.uri && y.uri){
+      return (uriMap[x.uri] || x.uri).localeCompare(uriMap[y.uri] || y.uri)
+    }
     return x.compareTerm(y)
   }
 }
 
-function heavyCompareSPO (x, y, g) {
-  var d = heavyCompare(x.subject, y.subject, g)
-  if (d) return d
-  d = heavyCompare(x.predicate, y.predicate, g)
-  if (d) return d
-  return heavyCompare(x.object, y.object, g)
+function heavyCompareSPO (x, y, g, uriMap) {
+  return heavyCompare(x.subject, y.subject, g, uriMap) ||
+    heavyCompare(x.predicate, y.predicate, g, uriMap) ||
+    heavyCompare(x.object, y.object, g, uriMap)
 }
 
 /**
@@ -346,10 +326,7 @@ function output (o) {
 function parseXML (str, options) {
   var dparser
   options = options || {}
-  if ((typeof tabulator !== 'undefined' && tabulator.isExtension)) {
-    dparser = Components.classes['@mozilla.org/xmlextras/domparser;1'].getService(
-      Components.interfaces.nsIDOMParser)
-  } else if (typeof module !== 'undefined' && module && module.exports) { // Node.js
+  if (typeof module !== 'undefined' && module && module.exports) { // Node.js
     // var libxmljs = require('libxmljs'); // Was jsdom before 2012-01 then libxmljs but that nonstandard
     // return libxmljs.parseXmlString(str)
 
@@ -433,58 +410,4 @@ function stackString (e) {
     str += '  ' + toprint[i][1] + '\n    ' + toprint[i][0]
   }
   return str
-}
-
-
-/**
- * Finds the variables in a graph (shallow).
- * Note: UNUSED.
- */
-// function variablesIn (g) {
-//   for (var i = 0; i < g.statements.length; i++) {
-//     var st = g.statatements[i]
-//     var vars = {}
-//     if (st.subject instanceof $rdf.Variable) {
-//       vars[st.subject.toNT()] = true
-//     }
-//     if (st.predicate instanceof $rdf.Variable) {
-//       vars[st.predicate.toNT()] = true
-//     }
-//     if (st.object instanceof $rdf.Variable) {
-//       vars[st.object.toNT()] = true
-//     }
-//   }
-//   return vars
-// }
-
-/**
- * Returns an XMLHttpRequest object for the appropriate current runtime
- * environment. Exports as `XMLHTTPFactory`
- */
-function xhr () {
-  var XMLHttpRequest
-  // Running inside the Tabulator Firefox extension
-  if (typeof tabulator !== 'undefined' && tabulator.isExtension) {
-    // Cannot use XMLHttpRequest natively, must request it through SDK
-    return Components
-      .classes['@mozilla.org/xmlextras/xmlhttprequest;1']
-      .createInstance()
-      .QueryInterface(Components.interfaces.nsIXMLHttpRequest)
-  } else if (typeof window !== 'undefined' && 'XMLHttpRequest' in window) {
-    // Running inside the browser
-    XMLHttpRequest = window.XMLHttpRequest
-    return new XMLHttpRequest()
-  } else if (typeof module !== 'undefined' && module && module.exports) {
-    // Running in Node.js
-    XMLHttpRequest = require('xmlhttprequest').XMLHttpRequest
-    return new XMLHttpRequest()
-  } else if (window.ActiveXObject) {
-    try {
-      return new ActiveXObject('Msxml2.XMLHTTP')
-    } catch (e) {
-      return new ActiveXObject('Microsoft.XMLHTTP')
-    }
-  } else {
-    return false
-  }
 }
